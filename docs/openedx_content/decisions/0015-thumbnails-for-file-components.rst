@@ -28,12 +28,12 @@ Decisions
 Creating or regenerating a thumbnail never creates a new version of the File component. The source image continues to be versioned normally, like any other File component content, but the thumbnail itself is not authored content and does not participate in that versioning.
 
 2. Thumbnail metadata lives platform-side, not in ``openedx_content``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A new Django model, owned by openedx-platform, is keyed to the File component — via a ``ForeignKey`` referencing :class:`Component`, and records which :class:`Media` object is the current thumbnail for that File component, together with any other presentation-adjacent fields the platform needs for that asset. Consistent with Decision 1, this model is a plain, mutable Django row: creating a new thumbnail or changing these fields is a simple update, not a new version.
 
 3. Thumbnail bytes are stored as ``Media``, referenced by a direct foreign key
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The thumbnail image itself is written to ``openedx_content`` as an ordinary :class:`Media` object. The platform-side model from Decision 2 also holds a plain foreign key to that :class:`Media` row — separate from its key relationship to the File component — and regenerating a thumbnail simply repoints that foreign key at a new, or existing and content-identical, :class:`Media` row.
 
@@ -49,7 +49,7 @@ Rather than a single thumbnail per File component, the model from Decision 2 is 
 Today, only one variant (``"default"``) is ever generated. Nothing here commits to building multiple sizes now; it only keeps the schema from needing a breaking migration if and when a second size is needed.
 
 5. Thumbnail generation remains synchronous, at upload and at import time
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Thumbnails continue to be generated eagerly, at the same points where the legacy contentstore already generates them: when an author uploads an image, and when a course is imported. No thumbnail is generated speculatively ahead of need, and none is generated lazily at serving time.
 
