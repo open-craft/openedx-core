@@ -48,7 +48,9 @@ This gives the thumbnail the storage and deduplication properties of :class:`Med
 
 Rather than a single thumbnail per source image, the model from Decision 2 is keyed on ``(source_media, variant)``, where ``variant`` is a short string identifying the size or context a thumbnail was generated for (e.g. ``"default"``), with a ``UniqueConstraint`` on that pair. Each ``(source_media, variant)`` row has its own foreign key to a :class:`Media` row for the thumbnail itself, per Decision 3.
 
-Today, only one variant (``"default"``) is ever generated. Nothing here commits to building multiple sizes now; it only keeps the schema from needing a breaking migration if and when a second size is needed.
+Only one variant (``"default"``) is ever generated for now. Nothing here commits to building multiple sizes now; it only keeps the schema from needing a breaking migration if and when a second size is needed.
+
+That single ``"default"`` size is meant to serve more than one consumer at once: Studio's Files page preview, and the "card" preview shown when browsing or searching for content to reuse in a content library. Choosing its dimensions to match that card size means both use cases share the same variant, rather than needing a second one just to support the library card view.
 
 5. Thumbnail generation remains synchronous, at upload and at import time
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
