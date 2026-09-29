@@ -30,21 +30,23 @@ Creating or regenerating a thumbnail never creates a new version of the File com
 2. Thumbnail metadata lives platform-side, not in ``openedx_content``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A new Django model, owned by openedx-platform, is keyed to the File component — via a ``ForeignKey`` referencing :class:`Component`, and records which :class:`Media` object is the current thumbnail for that File component, together with any other presentation-adjacent fields the platform needs for that asset. Consistent with Decision 1, this model is a plain, mutable Django row: creating a new thumbnail or changing these fields is a simple update, not a new version.
+A new Django model, owned by openedx-platform, is keyed to the **source image**, not to the File component — via a ``ForeignKey`` referencing the source image's :class:`Media` entry, and records which :class:`Media` object is the current thumbnail for that source image, together with any other presentation-adjacent fields the platform needs for that asset. Consistent with Decision 1, this model is a plain, mutable Django row: creating a new thumbnail or changing these fields is a simple update, not a new version.
+
+Keying on the source :class:`Media` rather than the File component means a thumbnail is a property of a specific, immutable set of image bytes. This matters because a File component can hold more than one image over its history, and, per :ref:`openedx-content-adr-0013`'s Decision 2, a single File component can also group more than one image file at once.
 
 3. Thumbnail bytes are stored as ``Media``, referenced by a direct foreign key
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The thumbnail image itself is written to ``openedx_content`` as an ordinary :class:`Media` object. The platform-side model from Decision 2 also holds a plain foreign key to that :class:`Media` row — separate from its key relationship to the File component — and regenerating a thumbnail simply repoints that foreign key at a new, or existing and content-identical, :class:`Media` row.
+The thumbnail image itself is written to ``openedx_content`` as an ordinary :class:`Media` object. The platform-side model from Decision 2 holds a second, separate foreign key to that :class:`Media` row — alongside its key relationship to the source image's :class:`Media` — and regenerating a thumbnail simply repoints that second foreign key at a new, or existing and content-identical, :class:`Media` row.
 
-Critically, this :class:`Media` is never associated with the source File component's :class:`ComponentVersion` through ``ComponentVersionMedia``. It is a sibling piece of data that happens to live in the same :class:`LearningPackage`, addressed and deduplicated the same way as any other :class:`Media`, but outside of the versioned graph that the File component participates in.
+Critically, neither the source image's :class:`Media` nor the thumbnail's :class:`Media` gain any new association with a :class:`ComponentVersion` through ``ComponentVersionMedia`` as a result of this model. It is a sibling piece of data that happens to live in the same :class:`LearningPackage`, addressed and deduplicated the same way as any other :class:`Media`, but outside of the versioned graph that the File component participates in.
 
 This gives the thumbnail the storage and deduplication properties of :class:`Media`, including sharing bytes across reruns of a course via ``media_file_namespace``.
 
-4. The platform-side model supports multiple thumbnail variants per File component
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4. The platform-side model supports multiple thumbnail variants per source image
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Rather than a single thumbnail per File component, the model from Decision 2 is keyed on ``(file_component, variant)``, where ``variant`` is a short string identifying the size or context a thumbnail was generated for (e.g. ``"default"``), with a ``UniqueConstraint`` on that pair. Each ``(file_component, variant)`` row has its own foreign key to a :class:`Media` row, per this decision.
+Rather than a single thumbnail per source image, the model from Decision 2 is keyed on ``(source_media, variant)``, where ``variant`` is a short string identifying the size or context a thumbnail was generated for (e.g. ``"default"``), with a ``UniqueConstraint`` on that pair. Each ``(source_media, variant)`` row has its own foreign key to a :class:`Media` row for the thumbnail itself, per Decision 3.
 
 Today, only one variant (``"default"``) is ever generated. Nothing here commits to building multiple sizes now; it only keeps the schema from needing a breaking migration if and when a second size is needed.
 
@@ -53,16 +55,14 @@ Today, only one variant (``"default"``) is ever generated. Nothing here commits 
 
 Thumbnails continue to be generated eagerly, at the same points where the legacy contentstore already generates them: when an author uploads an image, and when a course is imported. No thumbnail is generated speculatively ahead of need, and none is generated lazily at serving time.
 
-The same idea applies to a course rerun, to copy/paste, and to syncing a downstream File component with a newer published version of its upstream: in every case, a source with a known, already-generated thumbnail is being carried over to a destination, so instead of regenerating from scratch, the platform-side row from Decision 2 is copied (or updated, for a sync) to point at the corresponding copy of the thumbnail :class:`Media` in the destination. Generating a new thumbnail is only needed when there is no existing one to copy.
-
-This only applies when a File component is actually copied or its content is updated by a sync. When an existing File component is reused instead, because it is already a downstream copy of the same upstream, or because it happens to match on ``component_code`` and content hash (:ref:`openedx-content-adr-0014`, Decision 4, first and second bullets), no File component is copied at all, so its existing platform-side row (if any) is already correct and needs no action.
+The same idea applies to a course rerun, to copy/paste, and to syncing a downstream File component with a newer published version of its upstream. Because the model from Decision 2 is keyed on the source image's :class:`Media` rather than on the File component, this often requires no action at all: if the destination ends up with the exact same source :class:`Media`, the existing thumbnail row for that :class:`Media` is already correct, since the key it's looked up by hasn't changed. A new thumbnail only needs to be generated when a genuinely new source :class:`Media` appears with no existing thumbnail row — for example, a File component copied into a Learning Package that doesn't already have that exact image, or a sync that pulls in a new, edited version of the source image.
 
 6. Thumbnails are served by a dedicated platform-side endpoint, not the general asset-serving API
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The URL scheme :ref:`openedx-content-adr-0005` defines is resolved by looking up ``(component_version, path)`` in ``ComponentVersionMedia``, and per Decision 3, a thumbnail's :class:`Media` is never registered there. So a thumbnail cannot be served through that same endpoint.
 
-Instead, the platform-side app that owns the model from Decision 2 exposes its own endpoint, e.g. ``GET /api/contentstore/v2/file_components/{component_key}/thumbnail``, which looks up the current thumbnail's :class:`Media` directly from that model and serves it, reusing the same underlying serving mechanism :ref:`openedx-content-adr-0005` already defines for any ``Media`` (signed URL / ``X-Accel-Redirect``, ``Content-Security-Policy: sandbox``, ``nosniff``), just reached through a different lookup than ``ComponentVersionMedia``.
+Instead, the platform-side app that owns the model from Decision 2 exposes its own endpoint, e.g. ``GET /api/contentstore/v2/file_components/{component_key}/thumbnail``. Given a File component, it resolves the source image's current draft :class:`Media` through ``ComponentVersionMedia`` (the same way any other file attached to that version is resolved), looks up the thumbnail's :class:`Media` for that source ``(source_media, variant)`` from the model in Decision 2, and serves it, reusing the same underlying serving mechanism :ref:`openedx-content-adr-0005` already defines for any ``Media``.
 
 Consequences
 ------------
@@ -71,7 +71,8 @@ Consequences
 - Thumbnails do not participate in draft/publish, backup and restore, or any other machinery that assumes a :class:`PublishableEntityVersion` is immutable once created, because a thumbnail never becomes one.
 - Thumbnails are not included in a course's export package, and are regenerated from the source asset on import. This preserves the behavior the legacy contentstore already has today. No new mechanism is introduced to make thumbnails portable, because they were never treated as portable content: the source image is the asset of record, and the thumbnail is a derived, disposable artifact of it.
 - Regenerating a thumbnail repoints the platform-side model's foreign key at a new :class:`Media` row; it does not delete or overwrite the previous one, which is left unreferenced. ``openedx_content`` has no deletion or garbage-collection mechanism for individual :class:`Media` rows today.
-- Because the platform-side model is not versioned, there is only ever one current thumbnail per File component (per variant), not one per :class:`ComponentVersion`, so there is no way to retrieve the thumbnail as it existed at a past version. This is not a practical limitation today: the only consumer of thumbnails is Studio's Files page, which always shows a File component's current draft, so "the current thumbnail" and "the thumbnail of what Studio is showing" are always the same thing.
+- Although the platform-side model is not versioned, the thumbnail for a past version of a File component can still be retrieved: since the model is keyed on the source image's :class:`Media` rather than on the File component, looking up which :class:`Media` a past :class:`ComponentVersion` used (via ``ComponentVersionMedia``, which already records this) and then looking up that :class:`Media`'s thumbnail works for any version, past or present.
+- Thumbnails are naturally deduplicated across File components: if two different File components happen to hold byte-identical source images (the same :class:`Media`, whether by coincidence or because one was copied from the other), they share a single thumbnail row and a single thumbnail :class:`Media`, rather than each generating and storing its own copy.
 
 Rejected Alternatives
 ---------------------
@@ -87,10 +88,12 @@ We reject this because a thumbnail does not meet the "purely derived from the im
 
 More fundamentally, a thumbnail only makes sense for image content, is driven by that platform-configurable parameter rather than being a fixed function of the bytes, and, per Decision 4 of this ADR, needs to support more than one value per image — since ``ImageMedia`` is 1:1 with a single :class:`Media`, a single ``thumbnail`` field on it could not represent more than one size, short of adding one field per size or a separate table keyed by size. None of that fits a model that is meant to stay a simple, purely-derived reflection of a single image's byte data, nor the generic, file-type-agnostic pattern ``FileComponentMetadata`` follows above.
 
+This is a different thing from Decision 2's choice to key the platform-side model on the source image's :class:`Media` rather than on the File component. That choice gives the thumbnail the same per-image, content-addressed identity that ``ImageMedia`` has, without the two problems above, because it is a separate table (supporting multiple ``variant`` rows per :class:`Media`) that lives outside ``openedx_content`` (so it can depend on a platform-configurable parameter) rather than a field added to ``ImageMedia`` itself.
+
 Creating a new ``openedx-core`` app for this metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Rather than putting the model from Decision 2 in openedx-platform, we could add a new sibling app to ``openedx-core`` itself, following the same pattern ``openedx_learning`` and ``openedx_catalog`` use, keyed with a ``ForeignKey`` to :class:`Component` and :class:`Media` the same way. This is technically straightforward: a new app can sit above ``openedx_content`` without violating the layering enforced by ``.importlinter``.
+Rather than putting the model from Decision 2 in openedx-platform, we could add a new sibling app to ``openedx-core`` itself, following the same pattern ``openedx_learning`` and ``openedx_catalog`` use, keyed with ``ForeignKey``\ s to the source image's :class:`Media` and the thumbnail's :class:`Media` the same way. This is technically straightforward: a new app can sit above ``openedx_content`` without violating the layering enforced by ``.importlinter``.
 
 We reject this because ``openedx-core`` apps are meant to be generic, reusable content-management primitives, independent of any particular product's decisions. The specific size and resizing algorithm used to generate a thumbnail is a product/UX decision for this platform's Studio, not a property of the content model itself, and is expected to change independently of ``openedx-core``'s own release cycle. Coupling that kind of platform-specific configuration to a new ``openedx-core`` package would tie its releases to product decisions that have nothing to do with content modeling.
 
