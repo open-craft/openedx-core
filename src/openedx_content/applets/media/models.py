@@ -49,12 +49,15 @@ def get_storage() -> Storage:
     """
     # TODO: Document & rename this setting (https://github.com/openedx/openedx-core/issues/481)
     config_dict = getattr(settings, 'OPENEDX_LEARNING', {})
+    print('XXX get_storage config_dict =', config_dict)
 
     if 'MEDIA' in config_dict:
         storage_cls = import_string(config_dict['MEDIA']['BACKEND'])
         options = config_dict['MEDIA'].get('OPTIONS', {})
+        print('XXX get_storage found MEDIA', storage_cls, options)
         return storage_cls(**options)
 
+    print('XXX get_storage failed to find config')
     raise ImproperlyConfigured(
         "Cannot access file storage: Missing the OPENEDX_LEARNING['MEDIA'] "
         "setting, which should have a storage BACKEND and OPTIONS values for "
@@ -367,6 +370,7 @@ class Media(models.Model):
         for a given Media row.
         """
         storage = get_storage()
+        print('XXX write_file storage =', storage)
 
         # There are two reasons why a file might already exist even if the the
         # Media row is new:
@@ -384,13 +388,16 @@ class Media(models.Model):
         # error occurred. This seems unlikely, but possible if the underlying
         # storage engine writes in chunks.
         if storage.exists(self.path) and storage.size(self.path) == file.size:
+            print('XXX write_file skipping write', storage.exists(self.path), storage.size(self.path), self.path, file.size)
             return
+        print('XXX write_file writing file', storage.exists(self.path), storage.size(self.path), self.path, file.size)
         storage.save(self.path, file)
 
     def file_url(self) -> str:
         """
         This will sometimes be a time-limited signed URL.
         """
+        print('XXX file_url', get_storage().url(self.path))
         return get_storage().url(self.path)
 
     def clean(self):
