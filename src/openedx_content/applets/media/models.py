@@ -390,7 +390,7 @@ class Media(models.Model):
         if storage.exists(self.path) and storage.size(self.path) == file.size:
             print('XXX write_file skipping write', storage.exists(self.path), storage.size(self.path), self.path, file.size)
             return
-        print('XXX write_file writing file', storage.exists(self.path), storage.size(self.path), self.path, file.size)
+        print('XXX write_file writing file', storage.exists(self.path), self.path, file.size)
         storage.save(self.path, file)
 
     def file_url(self) -> str:
